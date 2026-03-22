@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMPL Animation Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+        #container {
+            display: flex;
+            height: 100vh;
+            gap: 10px;
+            padding: 10px;
+        }
+        #viewer {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #2d2d2d;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        canvas {
+            flex: 1;
+            background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+        }
+        #controls {
+            padding: 15px;
+            background: #222;
+            border-top: 1px solid #444;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #aaa;
+            min-width: 100px;
+        }
+        select, input {
+            padding: 6px 12px;
+            background: #333;
+            color: #e0e0e0;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        select:hover {
+            background: #444;
+        }
+        input[type="range"] {
+            min-width: 200px;
+            cursor: pointer;
+        }
+        button {
+            padding: 8px 16px;
+            background: #0066cc;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        button:hover {
+            background: #0080ff;
+        }
+        #stats {
+            font-size: 12px;
+            color: #aaa;
+            padding: 0 15px;
+        }
+        #sidebar {
+            width: 250px;
+            background: #2d2d2d;
+            border-radius: 8px;
+            padding: 15px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        #sidebar h3 {
+            color: #0066cc;
+            font-size: 14px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+        .person-item {
+            padding: 8px 12px;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 12px;
+        }
+        .person-item:hover {
+            background: #444;
+            border-color: #777;
+        }
+        .person-item.active {
+            background: #0066cc;
+            border-color: #0066cc;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="viewer">
+            <canvas id="canvas"></canvas>
+            <div id="stats"></div>
+            <div id="controls">
+                <div class="control-group">
+                    <button id="playBtn" onclick="togglePlayPause()">▶ Play</button>
+                </div>
+                <div class="control-group">
+                    <label>Frame:</label>
+                    <input type="range" id="frameSlider" min="0" max="100" value="0" onchange="setFrame(this.value)">
+                    <span id="frameLabel">0/0</span>
+                </div>
+                <div class="control-group">
+                    <label>Speed:</label>
+                    <input type="range" id="speedSlider" min="0.1" max="2.0" step="0.1" value="1.0" onchange="setSpeed(this.value)">
+                    <span id="speedLabel">1.0x</span>
+                </div>
+                <div class="control-group">
+                    <button onclick="resetCamera()">Reset Camera</button>
+                </div>
+            </div>
+        </div>
+        <div id="sidebar">
+            <h3>Persons</h3>
+            <div id="personList"></div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        let scene, camera, renderer, controls;
+        let currentPerson = null;
+        let currentFrameIndex = 0;
+        let isPlaying = false;
+        let playbackSpeed = 1.0;
+        let frameTime = 0.033332;
+        let deltaTime = 0;
+        let plyCaches = {};
+        let personFrameCounts = {};
+        let currentMesh = null;
+
+        const persons = ["person_01"];
+
+        function initThreeJS() {
+            // Setup scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+
+            // Setup camera
+            const viewerDiv = document.getElementById('viewer');
+            const width = viewerDiv.clientWidth;
+            const height = viewerDiv.clientHeight - 100;
+            camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+            camera.position.set(0, 1, 2);
+            camera.lookAt(0, 1, 0);
+
+            // Setup renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            const canvas = document.getElementById('canvas');
+            canvas.parentElement.insertBefore(renderer.domElement, canvas);
+            canvas.style.display = 'none';
+
+            // Setup controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1, 0);
+            controls.autoRotate = false;
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.update();
+
+            // Add lights
+            const light1 = new THREE.DirectionalLight(0xffffff, 0.8);
+            light1.position.set(5, 10, 7);
+            scene.add(light1);
+
+            const light2 = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(light2);
+
+            // Initialize person list
+            updatePersonList();
+
+            // Start animation loop
+            animate();
+        }
+
+        function updatePersonList() {
+            const list = document.getElementById('personList');
+            list.innerHTML = '';
+            persons.forEach(person => {
+                const item = document.createElement('div');
+                item.className = 'person-item';
+                item.textContent = person;
+                item.onclick = () => selectPerson(person);
+                list.appendChild(item);
+            });
+        }
+
+        function selectPerson(personName) {
+            currentPerson = personName;
+            currentFrameIndex = 0;
+            loadPersonFrames();
+            updateActiveHighlight();
+        }
+
+        function updateActiveHighlight() {
+            document.querySelectorAll('.person-item').forEach(item => {
+                item.classList.toggle('active', item.textContent === currentPerson);
+            });
+        }
+
+        function discoverFrameCount() {
+            if (!currentPerson) return Promise.resolve(1);
+            
+            // Try to load a manifest file first (if it exists)
+            return fetch(currentPerson + '/manifest.json', { cache: 'no-store' })
+                .then(r => {
+                    if (r.ok) return r.json().then(m => m.frameCount || 1);
+                    throw new Error('No manifest');
+                })
+                .catch(() => {
+                    // Fallback: probe for frames by testing a large range efficiently
+                    let maxFrame = 0;
+                    const checkFrame = (i) => {
+                        const frameName = currentPerson + '_frame_' + String(i).padStart(6, '0') + '.ply';
+                        const framePath = currentPerson + '/' + frameName;
+                        return fetch(framePath, { method: 'HEAD', cache: 'no-store' })
+                            .then(r => r.ok)
+                            .catch(() => false);
+                    };
+                    
+                    // Binary-search style: test logarithmic points first
+                    let checkPromises = [];
+                    const testPoints = [10, 50, 100, 200, 500, 1000, 2000, 5000];
+                    
+                    testPoints.forEach(i => {
+                        checkPromises.push(
+                            checkFrame(i).then(exists => {
+                                if (exists) maxFrame = Math.max(maxFrame, i);
+                            })
+                        );
+                    });
+                    
+                    return Promise.all(checkPromises).then(() => {
+                        // Once we know approximate range, fill in more carefully
+                        if (maxFrame > 0) {
+                            let moreChecks = [];
+                            for (let i = Math.max(0, maxFrame - 100); i <= maxFrame + 100; i += 1) {
+                                moreChecks.push(
+                                    checkFrame(i).then(exists => {
+                                        if (exists) maxFrame = Math.max(maxFrame, i + 1);
+                                    })
+                                );
+                            }
+                            return Promise.all(moreChecks).then(() => maxFrame);
+                        }
+                        return maxFrame || 1;
+                    });
+                });
+        }
+
+        function loadPersonFrames() {
+            if (!currentPerson) return;
+            
+            // Discover frame count asynchronously
+            discoverFrameCount().then(frameCount => {
+                personFrameCounts[currentPerson] = frameCount;
+                updateFrameSlider();
+                loadFrame(0);
+            });
+        }
+
+        function updateFrameSlider() {
+            if (!currentPerson) return;
+            const maxFrames = personFrameCounts[currentPerson] || 1;
+            document.getElementById('frameSlider').max = Math.max(0, maxFrames - 1);
+        }
+
+        function loadFrame(frameIndex) {
+            if (!currentPerson) return;
+
+            const maxFrames = personFrameCounts[currentPerson] || 1;
+            currentFrameIndex = Math.max(0, Math.min(frameIndex, maxFrames - 1));
+            const frameName = currentPerson + '_frame_' + String(currentFrameIndex).padStart(6, '0');
+            const framePath = currentPerson + '/' + frameName + '.obj';
+
+            // Cache check
+            if (!plyCaches[framePath]) {
+                const loader = new THREE.OBJLoader();
+                loader.load(framePath, (object) => {
+                    plyCaches[framePath] = object;
+                    displayFrame(object);
+                }, undefined, (error) => {
+                    console.error('Error loading OBJ:', error);
+                });
+            } else {
+                displayFrame(plyCaches[framePath]);
+            }
+
+            updateFrameLabel();
+            document.getElementById('frameSlider').value = currentFrameIndex;
+        }
+
+        function displayFrame(object) {
+            if (currentMesh) {
+                scene.remove(currentMesh);
+            }
+
+            // OBJLoader returns an Object3D/Group
+            if (object.isGroup) {
+                // It's a group from OBJLoader
+                currentMesh = object;
+                // Apply material to all children
+                object.traverse((child) => {
+                    if (child.isMesh) {
+                        child.material = new THREE.MeshPhongMaterial({
+                            color: 0xccaa88,
+                            shininess: 50,
+                            wireframe: false
+                        });
+                    }
+                });
+            } else {
+                // It's a geometry (shouldn't happen with OBJLoader, but handle it)
+                object.computeVertexNormals();
+                const material = new THREE.MeshPhongMaterial({
+                    color: 0xccaa88,
+                    shininess: 50,
+                    wireframe: false
+                });
+                currentMesh = new THREE.Mesh(object, material);
+            }
+            
+            // Flip model right-side up (180° X rotation) and scale down
+            currentMesh.rotation.x = Math.PI;
+            currentMesh.scale.set(0.5, 0.5, 0.5);
+            
+            scene.add(currentMesh);
+        }
+
+        function updateFrameLabel() {
+            const maxFrames = personFrameCounts[currentPerson] || 1;
+            document.getElementById('frameLabel').textContent = currentFrameIndex + '/' + (maxFrames - 1);
+        }
+
+        function setFrame(value) {
+            loadFrame(parseInt(value));
+            isPlaying = false;
+            document.getElementById('playBtn').textContent = '▶ Play';
+        }
+
+        function togglePlayPause() {
+            isPlaying = !isPlaying;
+            document.getElementById('playBtn').textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+        }
+
+        function setSpeed(value) {
+            playbackSpeed = parseFloat(value);
+            document.getElementById('speedLabel').textContent = playbackSpeed.toFixed(1) + 'x';
+        }
+
+        function resetCamera() {
+            camera.position.set(0, 1, 2);
+            camera.lookAt(0, 1, 0);
+            controls.target.set(0, 1, 0);
+            controls.update();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (isPlaying && currentPerson) {
+                deltaTime += frameTime * playbackSpeed;
+                if (deltaTime >= frameTime) {
+                    const nextFrame = currentFrameIndex + 1;
+                    const maxFrames = personFrameCounts[currentPerson] || 1;
+                    if (nextFrame < maxFrames) {
+                        loadFrame(nextFrame);
+                    } else {
+                        isPlaying = false;
+                        document.getElementById('playBtn').textContent = '▶ Play';
+                    }
+                    deltaTime = 0;
+                }
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Initialize on load
+        window.addEventListener('load', () => {
+            initThreeJS();
+            if (persons.length > 0) {
+                selectPerson(persons[0]);
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            const viewerDiv = document.getElementById('viewer');
+            const width = viewerDiv.clientWidth;
+            const height = viewerDiv.clientHeight - 100;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        });
+    </script>
+</body>
+</html>

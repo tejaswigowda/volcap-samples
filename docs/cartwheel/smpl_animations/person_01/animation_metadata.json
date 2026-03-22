@@ -1,0 +1,14 @@
+{
+  "format_version": "1.0",
+  "animation": {
+    "total_frames": 304,
+    "fps": 29.83240223463687,
+    "duration_seconds": 10.156741573033708,
+    "frame_duration_ms": 33.52059925093633
+  },
+  "geometry": {
+    "vertex_count": 18439,
+    "face_count": 36874,
+    "animation_type": "vertex_deformation"
+  }
+}
