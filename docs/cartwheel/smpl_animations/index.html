@@ -197,6 +197,11 @@
         let isSyncingFromVideo = false;
         let frameMetadata = {};
         let animationMetadata = null;
+        let objLoader = new THREE.OBJLoader();
+        let loadingQueue = new Set();
+        let preloadedFrames = new Set();
+        const MAX_CONCURRENT_LOADS = 3;
+        const PRELOAD_DISTANCE = 5;
 
         const persons = ["person_01"];
 
@@ -374,29 +379,80 @@
             document.getElementById('frameSlider').max = Math.max(0, maxFrames - 1);
         }
 
+        function getFramePath(frameIdx) {
+            if (!currentPerson) return '';
+            const frameName = currentPerson + '_frame_' + String(frameIdx).padStart(6, '0');
+            return currentPerson + '/' + frameName + '.obj';
+        }
+        
+        function preloadFrame(frameIdx) {
+            if (loadingQueue.size >= MAX_CONCURRENT_LOADS || preloadedFrames.has(frameIdx)) return;
+            
+            const framePath = getFramePath(frameIdx);
+            if (plyCaches[framePath]) return; // Already cached
+            
+            preloadedFrames.add(frameIdx);
+            loadingQueue.add(framePath);
+            
+            objLoader.load(
+                framePath,
+                (object) => {
+                    plyCaches[framePath] = object;
+                    loadingQueue.delete(framePath);
+                },
+                undefined,
+                (error) => {
+                    console.warn('Failed to preload frame:', framePath);
+                    loadingQueue.delete(framePath);
+                }
+            );
+        }
+        
+        function preloadFrames() {
+            if (!isPlaying || !currentPerson) return;
+            
+            const maxFrames = personFrameCounts[currentPerson] || 1;
+            
+            // Queue next N frames for preloading
+            for (let i = 1; i <= PRELOAD_DISTANCE; i++) {
+                const frameIdx = currentFrameIndex + i;
+                if (frameIdx < maxFrames) {
+                    if (!plyCaches[getFramePath(frameIdx)] && !preloadedFrames.has(frameIdx)) {
+                        preloadFrame(frameIdx);
+                    }
+                }
+            }
+        }
+
         function loadFrame(frameIndex) {
             if (!currentPerson) return;
 
             const maxFrames = personFrameCounts[currentPerson] || 1;
             currentFrameIndex = Math.max(0, Math.min(frameIndex, maxFrames - 1));
-            const frameName = currentPerson + '_frame_' + String(currentFrameIndex).padStart(6, '0');
-            const framePath = currentPerson + '/' + frameName + '.obj';
+            const framePath = getFramePath(currentFrameIndex);
 
             // Cache check
             if (!plyCaches[framePath]) {
-                const loader = new THREE.OBJLoader();
-                loader.load(framePath, (object) => {
-                    plyCaches[framePath] = object;
-                    displayFrame(object);
-                }, undefined, (error) => {
-                    console.error('Error loading OBJ:', error);
-                });
+                if (!loadingQueue.has(framePath)) {
+                    loadingQueue.add(framePath);
+                    objLoader.load(framePath, (object) => {
+                        plyCaches[framePath] = object;
+                        if (currentFrameIndex === frameIndex) {
+                            displayFrame(object);
+                        }
+                        loadingQueue.delete(framePath);
+                    }, undefined, (error) => {
+                        console.error('Error loading OBJ:', error);
+                        loadingQueue.delete(framePath);
+                    });
+                }
             } else {
                 displayFrame(plyCaches[framePath]);
             }
 
             updateFrameLabel();
             document.getElementById('frameSlider').value = currentFrameIndex;
+            preloadFrames();
         }
 
         function displayFrame(object) {
