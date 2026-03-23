@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SMPL Animation Viewer</title>
+    <title>Cartwheel Volcap</title>
     <style>
         * {
             margin: 0;
@@ -210,8 +210,8 @@
                     Your browser does not support the video tag.
                 </video>
             </div>
-            <h3>Persons</h3>
-            <div id="personList"></div>
+            <h3 style="display:none;">Persons</h3>
+            <div style="display:none;" id="personList"></div>
         </div>
     </div>
 
@@ -653,6 +653,10 @@
                         isPlaying = false;
                         document.getElementById('playBtn').textContent = '▶ Play';
                         document.getElementById('syncVideo').pause();
+                        // Reset to beginning
+                        currentFrameIndex = 0;
+                        document.getElementById('frameSlider').value = 0;
+                        loadFrame(0);
                     }
                     deltaTime = 0;
                 }
